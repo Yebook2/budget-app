@@ -2,15 +2,51 @@
 
 import argparse
 import csv
+import logging
+import os
 import sqlite3
 import sys
 from collections.abc import Callable, Iterable
 from functools import wraps
 from pathlib import Path
+from time import perf_counter
 
 from .models import Transaction, parse_tags, positive, valid_date, valid_month
 from .service import Ledger
 from .storage import LedgerStore
+
+
+LOGGER = logging.getLogger("budget_app")
+
+
+def log_execution(command: Callable[[], int]) -> Callable[[], int]:
+    @wraps(command)
+    def wrapped() -> int:
+        LOGGER.info("명령 실행 시작")
+        exit_code = 1
+        try:
+            exit_code = command()
+            return exit_code
+        except SystemExit as error:
+            if isinstance(error.code, int):
+                exit_code = error.code
+            raise
+        finally:
+            LOGGER.info("명령 실행 종료 (코드 %d)", exit_code)
+
+    return wrapped
+
+
+def measure_execution(command: Callable[[], int]) -> Callable[[], int]:
+    @wraps(command)
+    def wrapped() -> int:
+        started = perf_counter()
+        try:
+            return command()
+        finally:
+            LOGGER.info("실행시간 %.3f초", perf_counter() - started)
+
+    return wrapped
 
 
 def handle_errors(command: Callable[[], int]) -> Callable[[], int]:
@@ -130,6 +166,8 @@ def show_summary(ledger: Ledger, month: str, top: int) -> None:
             print(f"{index}) {category} {amount:,}원")
 
 
+@log_execution
+@measure_execution
 @handle_errors
 def main() -> int:
     args = parser().parse_args()
@@ -203,4 +241,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if os.environ.get("BUDGET_APP_LOG") == "1":
+        logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     sys.exit(main())
